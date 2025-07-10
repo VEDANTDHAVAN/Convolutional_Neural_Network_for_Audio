@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import pandas as pd
+import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 import modal
@@ -9,7 +10,9 @@ import torch.nn as nn
 import torchaudio.transforms as T
 import torch.optim as optim
 from torch.optim.lr_scheduler import OneCycleLR
-
+from tqdm import tqdm
+from datetime import datetime
+from torch.utils.tensorboard import SummaryWriter
 from model import AudioCNN
 
 app = modal.App("audio-CNN")
@@ -64,9 +67,26 @@ class ESC50Dataset(Dataset):
             spectogram = waveform
         
         return spectogram, row['label']
-
+    
+def mixed_data(x, y):
+        # Calculating blending Percentage
+    lam = np.random.beta(0.2, 0.2)
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size).to(x.device)
+        
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+ 
+def mixup_criterion(criterion, pred, y_a, y_b, lam): 
+    return lam * criterion(pred, y_a) + (1-lam) * criterion(pred, y_b)
+ 
 @app.function(image=image, gpu="T4", volumes={"/data": volume, "/models": model_volume}, timeout=60*60*2)
 def train():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = f'/models/tensorboard_logs/run_{timestamp}'
+    writer = SummaryWriter(log_dir)
+    
     esc50_dir = Path("/opt/esc50-data")
     train_transform = nn.Sequential(
         T.MelSpectrogram(
@@ -90,13 +110,13 @@ def train():
     
     train_dataset = ESC50Dataset(data_dir=esc50_dir, metadata_file=esc50_dir / "meta" / "esc50.csv", split="train", transform=train_transform)
         
-    val_dataset = ESC50Dataset(data_dir=esc50_dir, metadata_file=esc50_dir / "meta" / "esc50.csv", split="val", transform=val_transform)
+    val_dataset = ESC50Dataset(data_dir=esc50_dir, metadata_file=esc50_dir / "meta" / "esc50.csv", split="test", transform=val_transform)
     
     print(f"Training Samples: {len(train_dataset)}")
     print(f"Validation Samples: {len(val_dataset)}") 
     
     train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True) # To randomize the order of training data
-    test_loader = DataLoader(val_dataset, batch_size=32, shuffle=False) # To maintain the original sequence of Test Data
+    test_dataloader = DataLoader(val_dataset, batch_size=32, shuffle=False) # To maintain the original sequence of Test Data
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = AudioCNN(num_classes=len(train_dataset.classes))
@@ -112,7 +132,78 @@ def train():
         steps_per_epoch=len(train_dataloader), # no. of optimizing steps hapenning per epoch
         pct_start=0.1 # This means that it spends 10% of training increasing learning rate and 90% of training decreasing the learning rate 
     )
+    
+    best_accuracy = 0.0
+    print("Starting the Training Process")
+    for epoch in range(num_epochs):
+        model.train()
+        epoch_loss = 0.0
         
+        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch + 1}/{num_epochs}")
+        for data, target in progress_bar:
+            data, target = data.to(device), target.to(device) # data -> spectogram, target -> label of spectogram
+            
+            # To make the model more Realistic and Reliable, by adding mixture of sounds
+            if np.random.random() > 0.7:
+               data, target_a, target_b, lam = mixed_data(data, target)  
+               output = model(data)
+               loss = mixup_criterion(criterion, output, target_a, target_b, lam)          
+            else:
+                output = model(data)
+                loss = criterion(output, target)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            
+            epoch_loss += loss.item()
+            progress_bar.set_postfix({'Loss': f'{loss.item():.4f}'})
+            
+        avg_epoch_loss = epoch_loss / len(train_dataloader)
+        writer.add_scalar('Loss/Train', avg_epoch_loss, epoch)
+        writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
+        
+        # validation after each epoch
+        model.eval()
+        
+        correct = 0
+        total = 0
+        val_loss = 0
+        
+        with torch.no_grad():
+            for data, target in test_dataloader:
+                data, target = data.to(device), target.to(device)
+                outputs = model(data)
+                loss = criterion(outputs, target)
+                val_loss += loss.item()
+                
+                _, predicted = torch.max(outputs.data, 1)
+                total += target.size(0)
+                correct += (predicted == target).sum().item()
+                
+        accuracy = 100 * correct / total
+        avg_val_loss = val_loss / len(test_dataloader)
+        
+        writer.add_scalar('Loss/Validation', avg_val_loss, epoch)
+        writer.add_scalar('Accuracy/Validation', accuracy, epoch)
+        
+        print(f'Epoch: {epoch+1}, Loss: {avg_epoch_loss:.4f}, Validation Loss: {avg_val_loss:.4f}, Accuracy: {accuracy:.2f}%')
+        
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'accuracy': accuracy,
+                'epoch': epoch,
+                'classes': train_dataset.classes
+            }, '/models/best_model.pth')
+            print(f'New Best Model Saved: {accuracy:.2f}%')
+            
+    writer.close()        
+    print(f'Training completed!! Best Accuracy: {best_accuracy:.2f}%')
+   
+     
 @app.local_entrypoint()
 def main():
     train.remote()
