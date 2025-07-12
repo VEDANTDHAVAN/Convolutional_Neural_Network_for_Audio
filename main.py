@@ -73,14 +73,14 @@ class AudioClassifier:
         if len(audio_data.shape) > 1:
             audio_data = np.mean(audio_data, axis=1)
         
-        if sample_rates != 22050:
-            audio_data = librosa.resample(y=audio_data, orig_sr=sample_rates, target_sr=22050)
+        if sample_rates != 44100:
+            audio_data = librosa.resample(y=audio_data, orig_sr=sample_rates, target_sr=44100)
             
         spectogram = self.audio_processor.process_audio_chunk(audio_data)
         spectogram = spectogram.to(self.device)
         
         with torch.no_grad():
-            output = self.model(spectogram)
+            output, feature_maps = self.model(spectogram, return_feature_maps=True)
             
             # Clean the model output
             output = torch.nan_to_num(output)
@@ -95,8 +95,46 @@ class AudioClassifier:
             # zip function will create tuples like -> (0.9, 15), (0.04, 42), (0.5, 5)
             predictions = [{"class": self.classes[idx.item()], "confidence": prob.item()} for prob, idx in zip(top3_probs, top3_indices)]
             
+            visual_data = {}
+            for name, tensor in feature_maps.items():
+                if tensor.dim() == 4: # [batch_size, channels, height, width]
+                    aggregated_tensor = torch.mean(tensor, dim=1)
+                    # remove batch_size since we return 1 tensor at a time
+                    squeezed_tensor = aggregated_tensor.squeeze(0)
+                    # then turn it into a numpy array tensor
+                    numpy_arr = squeezed_tensor.cpu().numpy()
+                    clean_arr = np.nan_to_num(numpy_arr)
+                    # then we append it to the List
+                    visual_data[name] = {
+                        "shape": list(clean_arr.shape),
+                        "values": clean_arr.tolist()
+                    }
+                    
+            # Then we send the Spectogram to Frontend, to visualize
+            # [batch, channel, height, width] -> [height, width]
+            spectogram_np = spectogram.squeeze(0).squeeze(0).cpu().numpy()
+            clean_spectogram = np.nan_to_num(spectogram_np)
+            
+            # then we downsize the raw Audio Waveform, inorder to reduce the load on Frontend
+            max_samples = 8000
+            if len(audio_data) > max_samples:
+                step = len(audio_data) // max_samples
+                waveform_data = audio_data[::step]
+            else:
+                waveform_data = audio_data
+            
         response = {
-            "predictions": predictions
+            "predictions": predictions,
+            "visualization": visual_data,
+            "input_spectogram": {
+                        "shape": list(clean_spectogram.shape),
+                        "values": clean_spectogram.tolist()
+                    },
+            "waveform": {
+                "values": waveform_data.tolist(),
+                "sample_rate": 22050,
+                "duration": len(audio_data) / 22050
+            }
         }
         
         return response
@@ -106,7 +144,7 @@ def main():
     audio_data, sample_rate = sf.read("dogbark.wav")
     
     buffer = io.BytesIO()
-    sf.write(buffer, audio_data, 22050, format="WAV")
+    sf.write(buffer, audio_data, sample_rate, format="WAV")
     # because we are sending JSON to the endpoint, and we can't send raw bytes in the json payload,so we need to convert it into bytes which can be sent as a regular string in the json
     audio_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
     payload = {"audio_data": audio_b64}
@@ -117,6 +155,13 @@ def main():
     response.raise_for_status()
     
     result = response.json()
+    
+    waveform_info = result.get("waveform", {})
+    if waveform_info:
+        values = waveform_info.get("values", {})
+        print(f"First 10 values: {[round(v, 4) for v in values[:10]]}..")
+        print(f"Duration: {waveform_info.get("duration",0)}")
+    
     print("Top Predictions!!")
     for pred in result.get("predictions", []):
         print(f" -{pred["class"]} {pred["confidence"]:0.2%}")
