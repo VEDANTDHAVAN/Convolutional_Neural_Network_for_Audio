@@ -1,10 +1,14 @@
+/* eslint-disable @typescript-eslint/consistent-indexed-object-style */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/prefer-nullish-coalescing */
 "use client";
 
-import Link from "next/link";
 import React, { useState } from "react";
+import ColorScale from "~/components/ColorScale";
+import FeatureMap from "~/components/FeatureMap";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import { Card, CardContent, CardHeader } from "~/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Progress } from "~/components/ui/progress";
 
 // Created types for API Integration
@@ -170,10 +174,10 @@ export default function HomePage() {
 
   return (
     <main className="flex min-h-screen p-8 flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">
-      <div className="mx-auto max-w-[60%]">
+      <div className="mx-auto max-w-[100%]">
        <div className="mb-12 text-center">
         <h1 className="mb-4 text-4xl font-semibold tracking-light">Audio Visualizer using Convolutional Neural Network</h1>
-        <p className="mb-8 text-lg text-white/70">Upload a WAV file to see the Model's Predictions and Feature Maps</p>
+        <p className="mb-8 text-lg text-white/70">Upload a WAV file to see the Model&apos;s Predictions and Feature Maps</p>
         <div className="flex flex-col items-center">
          <div className="relative inline-block">
           <input type="file" accept=".wav" disabled={isloading} id="file-upload" onChange={handleFileChange} className="absolute inset-0 w-full cursor-pointer opacity-0" />
@@ -190,7 +194,7 @@ export default function HomePage() {
 
        {true && (<div className="space-y-8">
         <Card>
-          <CardHeader className="text-3xl font-bold text-green-700">Top Predictions</CardHeader>
+          <CardHeader className="text-3xl font-bold text-green-700">Top 3 Predictions</CardHeader>
           <CardContent>
             <div className="space-y-4">
               {visualData?.predictions.slice(0,3).map((pred, idx) => (
@@ -208,7 +212,48 @@ export default function HomePage() {
             </div>
           </CardContent>
         </Card>
-       </div>)}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+         <Card>
+          <CardHeader>
+            <CardTitle className="text-3xl font-bold text-blue-700">Input Spectogram</CardTitle>
+            </CardHeader>
+          <CardContent>
+            {/* Feature Maps */}
+             <FeatureMap data={visualData?.input_spectogram.values} title={`${visualData?.input_spectogram.shape.join(" x ")}`}/>
+            {/* Color Scale */}
+            <div className="mt-5 flex justify-end">
+              <ColorScale width={200} height={16} min={-1} max={1} />
+            </div>
+          </CardContent>
+         </Card>
+
+         <Card>
+          <CardHeader><CardTitle className="text-3xl font-bold text-purple-700">Audio Waveform</CardTitle></CardHeader>
+          <CardContent>
+            
+          </CardContent>
+         </Card>
+        </div>
+        {/* Feature Maps */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-3xl font-bold text-orange-700">Convolutional Layer Outputs</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-5 gap-6">
+              {main.map(([mainName, mainData]) => (
+                <div key={mainName} className="space-y-4">
+                 <div>
+                  <h4 className="mb-2 font-medium text-gray-900">{mainName}</h4>
+                  <FeatureMap data={mainData.values} title={`${mainData.shape.join(" x ")}`}/>
+                 </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+       </div>
+      )}
       </div>
     </main>
   );
