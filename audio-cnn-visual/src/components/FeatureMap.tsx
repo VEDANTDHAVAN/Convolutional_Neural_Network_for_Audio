@@ -1,7 +1,7 @@
 import { getColor } from "~/lib/colors";
 
-const FeatureMap = ({data, title, internal}:{
-    data: number[][], title: string, internal?: boolean
+const FeatureMap = ({data, title, internal, spectogram}:{
+    data: number[][], title: string, internal?: boolean, spectogram?: boolean
 }) => {
   if (!data?.length || !data[0]?.length) return null;
  
@@ -18,7 +18,9 @@ const FeatureMap = ({data, title, internal}:{
       <svg 
       viewBox={`0 0 ${mapWidth} ${mapHeight}`}
       preserveAspectRatio="none" 
-      className={`mx-auto block rounded border border-stone-400 ${internal ? "w-full max-w-32":"w-full max-w-[500px] max-h-[300px] object-contain"}`}
+      className={`mx-auto block rounded border border-stone-400 
+        ${internal ? "w-full max-w-32": spectogram ? 
+          "w-full object-contain" : "w-full max-w-[500px] max-h-[300px] object-contain"}`}
       >
       {data.flatMap((row, i) => row.map((val, j) => {
         const normalizedValue = absMax === 0 ? 0 : val / absMax;

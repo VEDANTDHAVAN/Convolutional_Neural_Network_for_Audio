@@ -10,6 +10,7 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Progress } from "~/components/ui/progress";
+import WaveForm from "~/components/WaveForm";
 
 // Created types for API Integration
 interface Prediction {
@@ -219,7 +220,8 @@ export default function HomePage() {
             </CardHeader>
           <CardContent>
             {/* Feature Maps */}
-             <FeatureMap data={visualData?.input_spectogram.values} title={`${visualData?.input_spectogram.shape.join(" x ")}`}/>
+             <FeatureMap data={visualData?.input_spectogram.values} spectogram
+              title={`${visualData?.input_spectogram.shape.join(" x ")}`}/>
             {/* Color Scale */}
             <div className="mt-5 flex justify-end">
               <ColorScale width={200} height={16} min={-1} max={1} />
@@ -230,7 +232,7 @@ export default function HomePage() {
          <Card>
           <CardHeader><CardTitle className="text-3xl font-bold text-purple-700">Audio Waveform</CardTitle></CardHeader>
           <CardContent>
-            
+           <WaveForm data={visualData?.waveform.values} title={`${visualData?.waveform.duration.toFixed(2)}s * ${visualData?.waveform.sample_rate}Hz`} /> 
           </CardContent>
          </Card>
         </div>
@@ -247,8 +249,20 @@ export default function HomePage() {
                   <h4 className="mb-2 font-medium text-gray-900">{mainName}</h4>
                   <FeatureMap data={mainData.values} title={`${mainData.shape.join(" x ")}`}/>
                  </div>
+                 {internals[mainName] && <div className="h-80 overflow-y-auto rounded border border-gray-300 bg-stone-50 p-2">
+                   <div className="space-y-2">
+                    {internals[mainName].sort(([a], [b]) => a.localeCompare(b))
+                     .map(([layerName, layerData]) => (
+                     <FeatureMap key={layerName} data={layerData.values} 
+                     title={layerName.replace(`${mainName}.`, "")} internal={true} />))
+                    } 
+                   </div>
+                  </div>}
                 </div>
               ))}
+            </div>
+            <div className="mt-5 flex justify-end">
+              <ColorScale width={200} height={16} min={-1} max={1} />
             </div>
           </CardContent>
         </Card>
